@@ -131,16 +131,26 @@ export default function PdfPage({
           2,
           Math.sqrt(16000000 / (v.width * v.height)),
         );
-        c.width = Math.ceil(v.width * ratio);
-        c.height = Math.ceil(v.height * ratio);
+        const backing = document.createElement("canvas");
+        backing.width = Math.ceil(v.width * ratio);
+        backing.height = Math.ceil(v.height * ratio);
         const render = page.render({
-          canvas: c,
+          canvas: backing,
           viewport: v,
           transform: [ratio, 0, 0, ratio, 0, 0],
           annotationMode: 1,
         });
         task = render;
-        await render.promise;
+        try {
+          await render.promise;
+          if (cancelled) return;
+          // Swap only complete frames, so live edits never blank the page.
+          c.width = backing.width;
+          c.height = backing.height;
+          c.getContext("2d")!.drawImage(backing, 0, 0);
+        } finally {
+          backing.width = backing.height = 1;
+        }
         if (cancelled) return;
         if (onSelect) {
           const rs = await extract(
