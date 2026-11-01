@@ -1,0 +1,304 @@
+import { useEffect, useRef, useState } from "react";
+import { Util, type PDFDocumentProxy } from "pdfjs-dist";
+import { extract } from "../pdf/load";
+import { selectWord } from "../pdf/geometry";
+import type { Fragment, Selection, PageEntry, Matrix } from "../pdf/types";
+export interface PageProps {
+  doc: PDFDocumentProxy;
+  sourceDoc?: PDFDocumentProxy;
+  entry: PageEntry;
+  number: number;
+  scale: number;
+  selected?: Selection | null;
+  onSelect?: (s: Selection, extend?: boolean) => void;
+  onVisible?: (n: number) => void;
+  tool?: string;
+  onMark?: (
+    page: PageEntry,
+    x: number,
+    y: number,
+    points?: [number, number][],
+  ) => void;
+}
+export default function PdfPage({
+  doc,
+  sourceDoc,
+  entry,
+  number,
+  scale,
+  selected,
+  onSelect,
+  onVisible,
+  tool,
+  onMark,
+}: PageProps) {
+  const host = useRef<HTMLDivElement>(null);
+  const canvas = useRef<HTMLCanvasElement>(null);
+  const [visible, setVisible] = useState(false);
+  const [size, setSize] = useState({ width: 612, height: 792 });
+  const [runs, setRuns] = useState<Fragment[]>([]);
+  const [extracted, setExtracted] = useState(false);
+  const [viewport, setViewport] =
+    useState<
+      ReturnType<
+        Awaited<ReturnType<PDFDocumentProxy["getPage"]>>["getViewport"]
+      >
+    >();
+  const [error, setError] = useState("");
+  const [ink, setInk] = useState<[number, number][]>([]);
+  const points = useRef<[number, number][]>([]);
+  useEffect(() => {
+    const o = new IntersectionObserver(
+      (es) => {
+        const v = es[0].isIntersecting;
+        setVisible(v);
+        if (v) onVisible?.(number);
+      },
+      { rootMargin: "600px" },
+    );
+    if (host.current) o.observe(host.current);
+    return () => o.disconnect();
+  }, [number, onVisible]);
+  useEffect(() => {
+    let dead = false;
+    void doc
+      .getPage(number)
+      .then((p) => {
+        if (!dead) {
+          const v = p.getViewport({ scale: 1, rotation: entry.rotation });
+          setSize({ width: v.width, height: v.height });
+        }
+      })
+      .catch(() => {
+        if (!dead) setError("Page dimensions unavailable.");
+      });
+    return () => {
+      dead = true;
+    };
+  }, [doc, number, entry.rotation]);
+  useEffect(() => {
+    let cancelled = false;
+    let task: { cancel: () => void } | undefined;
+    if (!visible) {
+      if (canvas.current) {
+        canvas.current.width = 1;
+        canvas.current.height = 1;
+      }
+      return;
+    }
+    setError("");
+    setExtracted(false);
+    void (async () => {
+      try {
+        const page = await doc.getPage(number);
+        if (cancelled) return;
+        const v = page.getViewport({ scale, rotation: entry.rotation });
+        setViewport(v);
+        const c = canvas.current!;
+        const ratio = Math.min(
+          devicePixelRatio || 1,
+          2,
+          Math.sqrt(16000000 / (v.width * v.height)),
+        );
+        c.width = Math.ceil(v.width * ratio);
+        c.height = Math.ceil(v.height * ratio);
+        const render = page.render({
+          canvas: c,
+          viewport: v,
+          transform: [ratio, 0, 0, ratio, 0, 0],
+          annotationMode: 1,
+        });
+        task = render;
+        await render.promise;
+        if (cancelled) return;
+        if (onSelect) {
+          const rs = await extract(
+            sourceDoc || doc,
+            sourceDoc ? entry.source + 1 : number,
+          );
+          if (!cancelled) {
+            setRuns(rs);
+            setExtracted(true);
+          }
+        }
+      } catch (e) {
+        if (
+          !cancelled &&
+          !(e instanceof Error && e.name === "RenderingCancelledException")
+        )
+          setError(
+            "This page could not be rendered. Unsupported or damaged content.",
+          );
+      }
+    })();
+    return () => {
+      cancelled = true;
+      task?.cancel();
+    };
+  }, [
+    doc,
+    sourceDoc,
+    number,
+    entry.source,
+    entry.rotation,
+    scale,
+    visible,
+    onSelect,
+  ]);
+  function coordinates(e: React.PointerEvent) {
+    const r = host.current!.getBoundingClientRect();
+    return viewport?.convertToPdfPoint(
+      e.clientX - r.left,
+      e.clientY - r.top,
+    ) as [number, number] | undefined;
+  }
+  return (
+    <section className="page-wrap" aria-label={`Page ${number}`}>
+      <div className="page-caption">
+        <span>PAGE {number.toString().padStart(2, "0")}</span>
+        <span>
+          {Math.round(size.width)} × {Math.round(size.height)} pt
+        </span>
+      </div>
+      <div
+        ref={host}
+        className={`pdf-page tool-${tool}`}
+        style={{ width: size.width * scale, height: size.height * scale }}
+        onPointerDown={(e) => {
+          if (
+            !onMark ||
+            !["draw", "sign", "annotation", "image", "shape"].includes(
+              tool || "",
+            )
+          )
+            return;
+          const p = coordinates(e);
+          if (!p) return;
+          if (tool === "draw" || tool === "sign") {
+            points.current = [p];
+            setInk([p]);
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } else onMark(entry, ...p);
+        }}
+        onPointerMove={(e) => {
+          if (points.current.length && e.buttons) {
+            const p = coordinates(e);
+            if (p && points.current.length < 5000) {
+              points.current.push(p);
+              setInk([...points.current]);
+            }
+          }
+        }}
+        onPointerCancel={() => {
+          points.current = [];
+          setInk([]);
+        }}
+        onPointerUp={() => {
+          if (points.current.length > 1) {
+            onMark?.(
+              entry,
+              points.current[0][0],
+              points.current[0][1],
+              points.current,
+            );
+          }
+          points.current = [];
+          setInk([]);
+        }}
+      >
+        <canvas
+          ref={canvas}
+          style={{ width: "100%", height: "100%" }}
+          aria-label={`Rendered PDF page ${number}`}
+        />
+        {error && <p className="page-error">{error}</p>}
+        {visible &&
+          viewport &&
+          onSelect &&
+          ["select", "inspect", "highlight"].includes(tool || "select") &&
+          runs.map((run) => {
+            const m = Util.transform(
+              viewport.transform,
+              run.transform,
+            ) as Matrix;
+            const fs = Math.hypot(m[0], m[1]);
+            const origSize = Math.hypot(run.transform[0], run.transform[1]);
+            const w = run.width * scale;
+            return (
+              <button
+                key={run.id}
+                aria-label={`Select ${run.text}`}
+                title={run.text}
+                className={`text-hit ${""}`}
+                style={{
+                  width: w,
+                  height: fs * 1.2,
+                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[1] / fs},${m[0] / fs},${m[4] + m[2] * run.ascent},${m[5] + m[3] * run.ascent})`,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const angle = Math.atan2(m[1], m[0]);
+                  const x =
+                    e.clientX -
+                    (m[4] + host.current!.getBoundingClientRect().left);
+                  const y =
+                    e.clientY -
+                    (m[5] + host.current!.getBoundingClientRect().top);
+                  const fraction = Math.max(
+                    0,
+                    Math.min(
+                      1,
+                      (x * Math.cos(angle) + y * Math.sin(angle)) / w,
+                    ),
+                  );
+                  const s = selectWord(
+                    run,
+                    fraction,
+                    e.detail > 1 ? "run" : "word",
+                  );
+                  if (origSize > 0)
+                    onSelect({ ...s, pageId: entry.id }, e.shiftKey);
+                }}
+              />
+            );
+          })}
+        {viewport && ink.length > 0 && (
+          <svg className="ink-preview" width="100%" height="100%">
+            <polyline
+              points={ink
+                .map((p) => viewport.convertToViewportPoint(...p).join(","))
+                .join(" ")}
+              fill="none"
+              stroke="#173c49"
+              strokeWidth={1.5 * scale}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        )}
+        {viewport &&
+          selected &&
+          selected.pageId === entry.id &&
+          (() => {
+            const m = Util.transform(viewport.transform, selected.transform);
+            const fs = Math.hypot(m[0], m[1]);
+            return (
+              <span
+                className="selection-outline"
+                style={{
+                  width: selected.width * scale,
+                  height: fs * 1.2,
+                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[1] / fs},${m[0] / fs},${m[4] + m[2] * selected.ascent},${m[5] + m[3] * selected.ascent})`,
+                }}
+              />
+            );
+          })()}
+        {visible && extracted && onSelect && !runs.length && (
+          <span className="scan-note">
+            No selectable text detected. This page may be scanned.
+          </span>
+        )}
+      </div>
+    </section>
+  );
+}
