@@ -1,5 +1,7 @@
 # PrecisionPDF
 
+**Live site: [PrecisionPDF on GitHub Pages](https://infoe-labs.github.io/quick-pdf-editor/)**
+
 A static, local-first PDF inspection and correction studio. React, strict TypeScript,
 Vite, locally compiled Tailwind, PDF.js and pdf-lib. Deployable beneath a GitHub
 Pages repository path; no backend or account is required.
