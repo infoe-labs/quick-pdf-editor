@@ -55,5 +55,9 @@ export async function prepareCorrection(e: Edit): Promise<Edit> {
     (sum, c) => sum + font.widthOfTextAtSize(c, size),
     0,
   );
-  return { ...e, naturalWidth, fitScale: fitToRegion(naturalWidth, e.width) };
+  return {
+    ...e,
+    naturalWidth,
+    fitScale: e.widthMode === "fit" ? fitToRegion(naturalWidth, e.width) : 1,
+  };
 }

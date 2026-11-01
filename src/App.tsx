@@ -45,6 +45,7 @@ import {
   mergeInWorker,
 } from "./pdf/client";
 import { fallbackName } from "./pdf/export";
+import { correctionExtent } from "./pdf/layout";
 import { prepareCorrection } from "./pdf/correction";
 import { sampleAppearance, type Appearance } from "./pdf/appearance";
 import { extendSelection } from "./pdf/geometry";
@@ -90,6 +91,7 @@ export default function App() {
   const [replacement, setReplacement] = useState("");
   const [appearance, setAppearance] = useState<Appearance>();
   const [editingId, setEditingId] = useState<string>();
+  const [widthMode, setWidthMode] = useState<"natural" | "fit">("natural");
   const [preparing, setPreparing] = useState(false);
   const [editorError, setEditorError] = useState("");
   const pendingApply = useRef(false);
@@ -390,6 +392,7 @@ export default function App() {
     );
     setReplacement(existing?.replacement ?? s.original);
     setEditingId(existing?.id);
+    setWidthMode(existing?.widthMode ?? "natural");
     pendingApply.current = false;
     setEditorError("");
     setError("");
@@ -443,6 +446,10 @@ export default function App() {
       fontName: selectedFont?.name || sel.family,
       fallback: !selectedFont?.reusable,
       ascent: sel.ascent,
+      widthMode,
+      availableWidth: sel.availableWidth,
+      sourceRunId: sel.id,
+      sourceOffset: sel.offset,
       background: appearance?.background,
       foreground: appearance?.foreground,
       backgroundConfidence: appearance?.confidence,
@@ -511,6 +518,7 @@ export default function App() {
     editingId,
     selectedFont?.name,
     selectedFont?.reusable,
+    widthMode,
   ]);
   function acceptDraft() {
     if (!draft || !bytes || preparing || draft.replacement !== replacement) {
@@ -733,7 +741,7 @@ export default function App() {
         return {
           x: x - 5,
           y: y - e.height * 2 - 8,
-          w: e.width * 2 + 10,
+          w: correctionExtent(e) * 2 + 10,
           h: e.height * 2 + 20,
         };
       });
@@ -1164,6 +1172,15 @@ export default function App() {
                           }
                           scale={scale}
                           selected={selection}
+                          corrections={
+                            compare === "original"
+                              ? []
+                              : state.edits.filter(
+                                  (e) =>
+                                    e.type === "correction" &&
+                                    e.pageId === entry.id,
+                                )
+                          }
                           onSelect={choose}
                           editingValue={replacement}
                           onEditingChange={
@@ -1175,6 +1192,9 @@ export default function App() {
                           onCancel={cancelEditing}
                           editingAppearance={appearance}
                           fitScale={draft?.fitScale}
+                          editingWidth={
+                            draft ? correctionExtent(draft) : selection?.width
+                          }
                           canApply={
                             !!draft &&
                             !!bytes &&
@@ -1477,8 +1497,8 @@ export default function App() {
                 <span className="eyebrow">LOCAL CHANGE RECORD</span>
                 <h2>A clear paper trail.</h2>
                 <p>
-                  The source stays intact. Every accepted operation is recorded
-                  here and attached to the corrected export.
+                  Edit history stays here on your device. It is not attached to
+                  exported PDFs.
                 </p>
                 {state.operations?.map((op, i) => (
                   <article className="history-item" key={`operation-${i}`}>
@@ -1503,33 +1523,6 @@ export default function App() {
                     </small>
                   </article>
                 ))}
-                <button
-                  className="button"
-                  disabled={!source}
-                  onClick={() =>
-                    download(
-                      JSON.stringify(
-                        {
-                          version: 1,
-                          notice:
-                            "Corrected copy. Overlays retain original text.",
-                          pages: state.pages,
-                          changes: state.edits,
-                          inheritedHistory,
-                          operations: state.operations,
-                          formChanges: state.formValues,
-                        },
-                        null,
-                        2,
-                      ),
-                      "precisionpdf-changes.json",
-                      "application/json",
-                    )
-                  }
-                >
-                  <Download size={15} />
-                  Download change log
-                </button>
                 <button
                   className="button subtle"
                   disabled={!source}
@@ -1558,8 +1551,8 @@ export default function App() {
                 {inheritedHistory.length > 0 && (
                   <p>
                     {inheritedHistory.length} merge history segments are
-                    retained in the attached and downloadable change logs.
-                    Source documents remain available unchanged.
+                    retained locally in this project. Source documents remain
+                    available unchanged.
                   </p>
                 )}
               </div>
@@ -1684,13 +1677,42 @@ export default function App() {
                       Type directly on the page. Enter to apply · Escape to
                       cancel.
                     </p>
+                    <label className="field-label">
+                      TEXT WIDTH
+                      <select
+                        aria-label="Text width"
+                        value={widthMode}
+                        onChange={(e) => {
+                          setWidthMode(e.target.value as "natural" | "fit");
+                          setDraft(undefined);
+                          setBytes(undefined);
+                          pendingApply.current = false;
+                        }}
+                      >
+                        <option value="natural">
+                          Natural width — extend text
+                        </option>
+                        <option value="fit">Fit to original space</option>
+                      </select>
+                    </label>
                     {draft && (
                       <div className="auto-fit-note" role="status">
-                        {(draft.fitScale ?? 1) < 0.999
-                          ? `Automatically fitted to ${Math.round((draft.fitScale ?? 1) * 100)}% width. Original baseline and height preserved.`
-                          : "Original baseline and text height preserved."}
+                        {widthMode === "fit" && (draft.fitScale ?? 1) < 0.999
+                          ? `Fitted to ${Math.round((draft.fitScale ?? 1) * 100)}% width.`
+                          : "Natural letter spacing. Text extends without squeezing or shrinking."}
                       </div>
                     )}
+                    {draft &&
+                      widthMode === "natural" &&
+                      draft.availableWidth !== undefined &&
+                      (draft.naturalWidth ?? 0) >
+                        draft.availableWidth + 0.5 && (
+                        <p className="layout-warning" role="status">
+                          This text extends into nearby text or the page edge.
+                          Select the full phrase to replace it, or choose “Fit
+                          to original space”. Text is not moved automatically.
+                        </p>
+                      )}
                     {appearance && appearance.confidence < 0.9 && (
                       <p className="small-note">
                         This background is complex. Its color is estimated;

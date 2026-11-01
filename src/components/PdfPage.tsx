@@ -1,9 +1,16 @@
 import { Check, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Util, type PDFDocumentProxy } from "pdfjs-dist";
+import { availableTextWidth, correctionExtent } from "../pdf/layout";
 import { extract } from "../pdf/load";
 import { selectWord, inversePoint } from "../pdf/geometry";
-import type { Fragment, Selection, PageEntry, Matrix } from "../pdf/types";
+import type {
+  Fragment,
+  Selection,
+  PageEntry,
+  Matrix,
+  Edit,
+} from "../pdf/types";
 export interface PageProps {
   doc: PDFDocumentProxy;
   sourceDoc?: PDFDocumentProxy;
@@ -22,6 +29,8 @@ export interface PageProps {
     foreground: [number, number, number];
   };
   fitScale?: number;
+  editingWidth?: number;
+  corrections?: Edit[];
   canApply?: boolean;
   tool?: string;
   onMark?: (
@@ -48,6 +57,8 @@ export default function PdfPage({
   onCancel,
   editingAppearance,
   fitScale = 1,
+  editingWidth,
+  corrections = [],
   canApply = false,
 }: PageProps) {
   const input = useRef<HTMLInputElement>(null);
@@ -291,8 +302,66 @@ export default function PdfPage({
                     e.detail > 1 ? "run" : "word",
                   );
                   if (origSize > 0)
-                    onSelect({ ...s, pageId: entry.id }, e.shiftKey);
+                    onSelect(
+                      {
+                        ...s,
+                        pageId: entry.id,
+                        availableWidth: availableTextWidth(
+                          s,
+                          runs,
+                          viewport.viewBox,
+                        ),
+                      },
+                      e.shiftKey,
+                    );
                 }}
+              />
+            );
+          })}
+        {viewport &&
+          onSelect &&
+          ["select", "inspect", "highlight"].includes(tool || "select") &&
+          corrections.map((edit) => {
+            const m = Util.transform(viewport.transform, edit.transform);
+            const fs = Math.hypot(m[0], m[1]);
+            const run =
+              runs.find((r) => r.id === edit.sourceRunId) ||
+              runs.find(
+                (r) =>
+                  r.fontId === edit.fontId && r.text.includes(edit.original),
+              );
+            return (
+              <button
+                key={edit.id}
+                className="text-hit correction-hit"
+                aria-label={`Edit ${edit.replacement}`}
+                style={{
+                  width: correctionExtent(edit) * scale,
+                  height: fs * 1.2,
+                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[2] / fs},${-m[3] / fs},${m[4] + m[2] * (edit.ascent ?? 0.8)},${m[5] + m[3] * (edit.ascent ?? 0.8)})`,
+                }}
+                onClick={() =>
+                  onSelect({
+                    id: edit.sourceRunId || run?.id || edit.id,
+                    page: edit.page,
+                    pageId: entry.id,
+                    text: edit.original,
+                    original: edit.original,
+                    fontId: edit.fontId,
+                    family: run?.family || "sans-serif",
+                    fontName: run?.fontName,
+                    transform: edit.transform,
+                    width: edit.width,
+                    height: edit.height,
+                    ascent: edit.ascent ?? 0.8,
+                    direction: run?.direction || "ltr",
+                    offset:
+                      edit.sourceOffset ??
+                      Math.max(0, run?.text.indexOf(edit.original) ?? 0),
+                    sourceIds: [edit.sourceRunId || run?.id || edit.id],
+                    availableWidth: edit.availableWidth,
+                  })
+                }
               />
             );
           })}
@@ -345,7 +414,8 @@ export default function PdfPage({
                   value={editingValue}
                   spellCheck={false}
                   style={{
-                    width: (selected.width * scale) / fitScale + 4,
+                    width:
+                      ((editingWidth ?? selected.width) * scale) / fitScale + 4,
                     height: fs * 1.2,
                     fontSize: fs,
                     fontFamily: selected.family,

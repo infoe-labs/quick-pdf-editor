@@ -9,6 +9,7 @@ import {
   popGraphicsState,
   concatTransformationMatrix,
 } from "pdf-lib";
+import { removeLegacyChangeLog } from "./attachments";
 import type { ExportRequest, Edit } from "./types";
 export function fallbackName(name: string): StandardFonts {
   const n = name.toLowerCase();
@@ -58,6 +59,7 @@ export async function exportPdf(req: ExportRequest): Promise<Uint8Array> {
   const doc = await PDFDocument.load(req.source.slice(), {
     updateMetadata: false,
   });
+  removeLegacyChangeLog(doc);
   const original = doc.getPages();
   for (const [name, value] of Object.entries(req.formValues || {})) {
     const field = doc.getForm().getField(name);
@@ -182,42 +184,19 @@ export async function exportPdf(req: ExportRequest): Promise<Uint8Array> {
         height: 16,
         color: rgb(0.96, 0.97, 0.98),
       });
-      page.drawText(
-        "CORRECTED COPY • Changes recorded in attached change log",
-        {
-          x: 12,
-          y: 5,
-          size: 7,
-          font: await doc.embedFont(StandardFonts.Helvetica),
-          color: rgb(0.22, 0.3, 0.35),
-        },
-      );
+      page.drawText("CORRECTED COPY • Modified document", {
+        x: 12,
+        y: 5,
+        size: 7,
+        font: await doc.embedFont(StandardFonts.Helvetica),
+        color: rgb(0.22, 0.3, 0.35),
+      });
     }
   }
   if (req.label) {
     doc.setTitle("Corrected copy");
     doc.setSubject(
-      "Modified document — see attached precisionpdf-changes.json",
-    );
-    await doc.attach(
-      new TextEncoder().encode(
-        JSON.stringify(
-          {
-            version: 1,
-            notice:
-              "Corrected copy. Overlays retain underlying text; not secure redaction.",
-            pages: req.pages,
-            changes: req.edits,
-            inheritedHistory: req.inheritedHistory || [],
-            operations: req.operations || [],
-            formChanges: req.formValues || {},
-          },
-          null,
-          2,
-        ),
-      ),
-      "precisionpdf-changes.json",
-      { mimeType: "application/json", description: "Local change record" },
+      "Modified document. Edit history remains local to PrecisionPDF.",
     );
   }
   return doc.save();

@@ -32,28 +32,31 @@ npm run preview
    directly over the selected word. Double-click selects the entire extracted run;
    Shift-click adds nearby aligned text in the same font.
 2. Type the new value on the page. Preview generation starts automatically. Longer
-   replacements fit horizontally inside the existing region while retaining the
-   original baseline and text height. There is no "choose a shorter value" gate.
+   replacements extend naturally with their original baseline and text height.
+   Letter spacing is not condensed. An optional “Fit to original space” mode
+   remains available. Nearby text/page-edge collisions receive a visible warning;
+   other content is not automatically moved.
 3. Press **Enter** or click **Apply** beside the text. Escape/Cancel discards the
    draft. Click an accepted correction again to revise it. Undo/redo stays available.
 4. Use **Save as new** to download a separate `*-corrected-copy.pdf`. Each page has
-   a visible correction footer and an attached JSON change record. The Changes
-   panel offers the log and byte-identical unchanged originals separately.
+   a visible correction footer. Edit history stays in the website (or your opt-in
+   local project) and is not attached to the PDF. The Changes panel also offers
+   byte-identical unchanged originals.
 
 Source text/background colors are estimated locally from rendered pixels. Solid
 backgrounds are detected automatically; complex backgrounds get an explicit review
 notice. Standard source fonts are matched where supported. Other resources use a
 named compatible fallback automatically, displayed in Properties; embedded font
 outlines are not reused. Unsupported replacement characters are identified instead
-of silently exporting missing glyphs. Strong horizontal compression can reduce
-legibility; the fitting percentage is displayed. This is fitting, not paragraph
-reflow or proof of original typography equivalence.
+of silently exporting missing glyphs. Optional horizontal fitting can reduce
+legibility; its percentage is displayed. Natural width is the default. This is
+not paragraph reflow or proof of original typography equivalence.
 
 While the on-page input has focus, it is an editing control. Blur it or use
 side-by-side/overlay comparison to inspect the generated vector PDF preview.
 Font/resource inspection remains available without blocking the basic edit flow.
 Affine correction placement preserves rotation, nonuniform scale and skew when
-selection geometry is available. Source spacing is normalized to the fitted value.
+selection geometry is available. Replacement text uses natural font advances unless fitting is selected.
 
 The correction footer occupies the bottom **16 PDF points** of each exported page
 and may cover existing footer content: inspect it before export. Overlay corrections
@@ -121,7 +124,7 @@ Documents remain in memory until the tab closes or a different source opens.
 **Save project** explicitly opts into IndexedDB storage and subsequent local
 autosaves. Saved data includes the original PDF, filename, page structure, edits,
 form values and inserted images. Merging keeps unchanged downloads of every imported source and retains prior change
-segments in the combined audit record. One current project is retained for seven days
+segments in the local project history. One current project is retained for seven days
 from its last save; expiry is enforced when storage is accessed, not by a closed
 browser background task. Restoring does not automatically re-enable autosave.
 Unaccepted correction drafts are intentionally not saved. Memory-only work does
