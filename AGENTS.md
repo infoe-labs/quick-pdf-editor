@@ -104,8 +104,9 @@ local and must not permit personal identities.
 - Never upload or log document bytes, extracted text, filenames, images or edits.
   Bundle workers, fonts, CMaps and decoders locally and audit network behavior.
 - Keep source PDF bytes immutable. Unchanged-original download must remain byte
-  identical. Modified exports must retain visible corrected-copy disclosure and
-  a machine-readable record; never add an unmodified-looking financial export.
+  identical. Modified exports must retain visible corrected-copy disclosure. Keep edit
+  history local; do not attach it to exported PDFs. Never add an unmodified-looking
+  financial export.
 - Explicitly distinguish vector overlays from content deletion and redaction.
   Never claim embedded glyph reuse, signature validity or universal fidelity
   without file-specific evidence. Reject unsupported transforms/encoding.

@@ -1250,3 +1250,19 @@ dd {
 .inline-edit-actions button:hover {
   background: var(--accent-soft);
 }
+.field-label select {
+  padding: 10px;
+  font-size: 11px;
+  letter-spacing: 0;
+  min-width: 0;
+  width: 100%;
+}
+.layout-warning {
+  background: #fff3dc;
+  color: #875e20 !important;
+  border: 1px solid #ead2a3;
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 10px !important;
+  line-height: 1.6 !important;
+}

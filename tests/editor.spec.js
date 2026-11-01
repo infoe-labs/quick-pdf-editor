@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, StandardFonts, PDFName } from "pdf-lib";
 const base = process.env.BASE_PATH || "/";
 async function pdf() {
   const d = await PDFDocument.create();
@@ -71,6 +71,8 @@ test("date correction, export, audit and offline recovery stay local", async ({
   const exported = await PDFDocument.load(await fs.readFile(path));
   expect(exported.getPageCount()).toBe(2);
   expect(exported.getTitle()).toBe("Corrected copy");
+  expect(exported.catalog.has(PDFName.of("AF"))).toBe(false);
+  expect(exported.catalog.has(PDFName.of("Names"))).toBe(false);
   await page.getByRole("button", { name: "Changes 1" }).click();
   await expect(page.locator(".history-item")).toContainText("2026/10/31");
   const originalDownload = page.waitForEvent("download");
@@ -289,7 +291,9 @@ test("longer text edits in place automatically, samples colors, and can be revis
   });
   await expect(field).toBeFocused();
   await field.fill("1000000");
-  await expect(page.getByText(/Automatically fitted to/)).toBeVisible();
+  await expect(page.getByText(/Natural letter spacing/)).toBeVisible();
+  const grown = await field.boundingBox();
+  expect(grown.width).toBeGreaterThan(50);
   await expect(
     page.getByRole("button", { name: "Apply change" }),
   ).toBeEnabled();
@@ -297,22 +301,61 @@ test("longer text edits in place automatically, samples colors, and can be revis
   await expect(field).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save as new" })).toBeEnabled();
   await page.getByRole("button", { name: "Changes 1" }).click();
-  const pending = page.waitForEvent("download");
-  await page.getByRole("button", { name: "Download change log" }).click();
-  const fs = await import("node:fs/promises");
-  const log = JSON.parse(
-    await fs.readFile(await (await pending).path(), "utf8"),
-  );
-  expect(log.changes[0].fitScale).toBeLessThan(1);
-  expect(log.changes[0].background[0]).toBeGreaterThan(0.9);
-  expect(log.changes[0].foreground[2]).toBeGreaterThan(
-    log.changes[0].foreground[0],
-  );
-  await page.getByRole("button", { name: "Select 10000", exact: true }).click();
+  await expect(
+    page.getByText(
+      "Edit history stays here on your device. It is not attached to exported PDFs.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Download change log" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit 1000000", exact: true }).click();
   await expect(field).toHaveValue("1000000");
   await field.fill("12");
   await field.press("Enter");
   await expect(field).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Changes 1" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save as new" })).toBeEnabled();
+});
+
+test("natural width warns about neighboring text and fitting remains optional", async ({
+  page,
+}) => {
+  const d = await PDFDocument.create();
+  const font = await d.embedFont(StandardFonts.Helvetica);
+  const p = d.addPage([612, 792]);
+  p.drawText("10000", { x: 48, y: 680, size: 16, font });
+  p.drawText("Neighbor", { x: 120, y: 680, size: 16, font });
+  await page.goto(base);
+  await page
+    .locator("input[type=file]")
+    .first()
+    .setInputFiles({
+      name: "synthetic-layout.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from(await d.save()),
+    });
+  await page.getByRole("button", { name: "Select 10000", exact: true }).click();
+  const editor = page.getByRole("textbox", {
+    name: "Edit selected text in place",
+  });
+  await editor.fill("100000000000");
+  await expect(
+    page.getByText(/This text extends into nearby text/),
+  ).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Text width" })).toHaveValue(
+    "natural",
+  );
+  const width = (await editor.boundingBox()).width;
+  await page.getByRole("combobox", { name: "Text width" }).selectOption("fit");
+  await expect(page.getByText(/Fitted to \d+% width/)).toBeVisible();
+  await expect(
+    page.getByText(/This text extends into nearby text/),
+  ).toHaveCount(0);
+  expect((await editor.boundingBox()).width).toBeLessThan(width);
+  await expect(
+    page.getByRole("button", { name: "Apply text change" }),
+  ).toBeEnabled();
+  await editor.press("Enter");
+  await expect(editor).toHaveCount(0);
 });

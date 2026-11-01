@@ -22,6 +22,7 @@ export interface Selection extends Fragment {
   original: string;
   offset: number;
   sourceIds: string[];
+  availableWidth?: number;
 }
 export interface FontInfo {
   id: string;
@@ -59,7 +60,11 @@ export interface Edit {
   points?: [number, number][];
   image?: string;
   fitScale?: number;
+  widthMode?: "natural" | "fit";
+  availableWidth?: number;
   naturalWidth?: number;
+  sourceRunId?: string;
+  sourceOffset?: number;
   background?: RGB;
   foreground?: RGB;
   backgroundConfidence?: number;

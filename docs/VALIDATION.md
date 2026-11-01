@@ -15,8 +15,8 @@ PDFs. Test real Android Chrome and iOS Safari installation and two-finger zoom.
 
 The footer is a disclosed change in the bottom 16 PDF points and may overlap
 original footer content. Correction background colors are estimated from border pixels; textured regions
-need visual review. Longer values fit horizontally inside the selected region,
-with the percentage disclosed. Pixel thresholds are diagnostics, not guarantees that
+need visual review. Longer values extend at their natural width by default, with nearby text/page
+collisions flagged. Fitting is optional. Edit history is not attached to exports. Pixel thresholds are diagnostics, not guarantees that
 all small differences are antialiasing. Rotated edit masks currently use an
 axis-aligned estimate; treat flagged differences conservatively.
 

@@ -22,7 +22,7 @@ const edit: Edit = {
   fallback: false,
   timestamp: "2026-01-01T00:00:00Z",
 };
-test("export preserves immutable source, page size, vector streams and audit attachment", async () => {
+test("export preserves immutable source, page size, vector streams without attaching edit history", async () => {
   const bytes = await fixture();
   const copy = bytes.slice();
   const result = await exportPdf({
@@ -39,7 +39,8 @@ test("export preserves immutable source, page size, vector streams and audit att
   assert.equal(d.getPageCount(), 2);
   assert.equal(d.getPage(0).getWidth(), 612);
   assert.equal(d.getTitle(), "Corrected copy");
-  assert.ok(d.catalog.get(PDFName.of("Names")));
+  assert.ok(!d.catalog.has(PDFName.of("AF")));
+  assert.ok(!d.catalog.has(PDFName.of("Names")));
   const contents = d.getPage(0).node.Contents();
   assert.ok(contents);
 });
@@ -162,6 +163,7 @@ test("longer replacements fit the selected region instead of being rejected", as
   const fitted = await prepareCorrection({
     ...edit,
     width: 44.5,
+    widthMode: "fit",
     replacement: "1000000",
     transform: [16, 0, 0, 16, 48, 680],
   });
@@ -211,4 +213,98 @@ test("automatic color sampling recognizes flat colored backgrounds and strokes",
   assert.ok(result.confidence > 0.9);
   assert.ok(Math.abs(result.background[0] - 240 / 255) < 0.02);
   assert.ok(result.foreground[2] > result.foreground[0]);
+});
+
+test("natural width is the default and does not condense longer text", async () => {
+  const { prepareCorrection } = await import("../src/pdf/correction");
+  const natural = await prepareCorrection({
+    ...edit,
+    width: 44.5,
+    replacement: "1000000",
+  });
+  assert.ok(natural.naturalWidth! > 44.5);
+  assert.equal(natural.fitScale, 1);
+});
+test("legacy change-log attachment is removed while unrelated attachments survive", async () => {
+  const d = await PDFDocument.load(await fixture());
+  await d.attach(
+    new TextEncoder().encode("synthetic private edit history"),
+    "precisionpdf-changes.json",
+  );
+  await d.attach(
+    new TextEncoder().encode("synthetic original attachment"),
+    "original-note.txt",
+  );
+  const source = await d.save();
+  const out = await exportPdf({
+    source,
+    pages: [
+      { id: "one", source: 0, rotation: 0 },
+      { id: "two", source: 1, rotation: 0 },
+    ],
+    edits: [edit],
+    label: true,
+  });
+  const reopened = await PDFDocument.load(out);
+  const { PDFDict, PDFArray } = await import("pdf-lib");
+  const names = reopened.catalog
+    .lookup(PDFName.of("Names"), PDFDict)
+    .lookup(PDFName.of("EmbeddedFiles"), PDFDict)
+    .lookup(PDFName.of("Names"), PDFArray);
+  assert.equal(names.size(), 2);
+  assert.equal(
+    (names.lookup(0) as import("pdf-lib").PDFString).decodeText(),
+    "original-note.txt",
+  );
+  const af = reopened.catalog.lookup(PDFName.of("AF"), PDFArray);
+  assert.equal(af.size(), 1);
+  const specs = reopened.context
+    .enumerateIndirectObjects()
+    .filter(
+      ([, o]) =>
+        o instanceof PDFDict &&
+        o.get(PDFName.of("Type"))?.toString() === "/Filespec",
+    );
+  assert.equal(specs.length, 1);
+});
+test("available width accounts for following words in the same run and nearby runs", async () => {
+  const { availableTextWidth, correctionExtent } =
+    await import("../src/pdf/layout");
+  const run: Fragment = {
+    id: "a",
+    page: 1,
+    text: "12345 next",
+    fontId: "f",
+    family: "Helvetica",
+    transform: [10, 0, 0, 10, 20, 50],
+    width: 100,
+    height: 10,
+    ascent: 0.8,
+    direction: "ltr",
+    advances: Array.from({ length: 11 }, (_, i) => i / 10),
+  };
+  const selected = {
+    ...run,
+    width: 50,
+    text: "12345",
+    original: "12345",
+    offset: 0,
+    sourceIds: ["a"],
+  };
+  assert.equal(availableTextWidth(selected, [run], [0, 0, 612, 792]), 60);
+  assert.equal(
+    availableTextWidth(
+      selected,
+      [
+        { ...run, text: "12345", width: 50 },
+        { ...run, id: "b", transform: [10, 0, 0, 10, 100, 50] },
+      ],
+      [0, 0, 612, 792],
+    ),
+    80,
+  );
+  assert.equal(
+    correctionExtent({ width: 50, naturalWidth: 90, fitScale: 1 }),
+    90,
+  );
 });
