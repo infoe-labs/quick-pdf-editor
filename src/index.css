@@ -1189,3 +1189,64 @@ dd {
   background: #2d907b12;
   pointer-events: none;
 }
+.inline-text-editor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  border: 1px solid #19846b;
+  border-radius: 1px;
+  outline: 2px solid #19846b20;
+  padding: 0;
+  line-height: 1.2;
+  min-width: 12px;
+  box-sizing: content-box;
+  z-index: 3;
+  caret-color: #196b60;
+  box-shadow: 0 1px 6px #163e2520;
+}
+.inline-text-editor:focus-visible {
+  outline: 2px solid #19846b45;
+  outline-offset: 1px;
+}
+.edit-help {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.auto-fit-note {
+  font-size: 10px;
+  line-height: 1.6;
+  background: var(--accent-soft);
+  color: var(--accent);
+  padding: 10px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+.editor-error {
+  color: #b14236 !important;
+  font-size: 11px;
+}
+.inline-edit-actions {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 2px 8px #173c4920;
+}
+.inline-edit-actions button {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 5px 7px;
+  font-size: 11px;
+  color: var(--accent);
+  border-radius: 4px;
+}
+.inline-edit-actions button:hover {
+  background: var(--accent-soft);
+}

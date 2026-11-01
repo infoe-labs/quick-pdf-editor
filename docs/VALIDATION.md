@@ -14,8 +14,9 @@ PDF viewer before a production release, particularly merged/forms/bookmarked
 PDFs. Test real Android Chrome and iOS Safari installation and two-finger zoom.
 
 The footer is a disclosed change in the bottom 16 PDF points and may overlap
-original footer content. White correction rectangles are valid only on a checked
-plain white background. Pixel thresholds are diagnostics, not guarantees that
+original footer content. Correction background colors are estimated from border pixels; textured regions
+need visual review. Longer values fit horizontally inside the selected region,
+with the percentage disclosed. Pixel thresholds are diagnostics, not guarantees that
 all small differences are antialiasing. Rotated edit masks currently use an
 axis-aligned estimate; treat flagged differences conservatively.
 

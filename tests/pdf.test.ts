@@ -155,3 +155,60 @@ test("embedded TrueType, subset and CFF require explicit fallback", async () => 
     );
   }
 });
+
+test("longer replacements fit the selected region instead of being rejected", async () => {
+  const { prepareCorrection, fitToRegion } =
+    await import("../src/pdf/correction");
+  const fitted = await prepareCorrection({
+    ...edit,
+    width: 44.5,
+    replacement: "1000000",
+    transform: [16, 0, 0, 16, 48, 680],
+  });
+  assert.ok(fitted.naturalWidth! > 44.5);
+  assert.ok(fitted.fitScale! < 1);
+  assert.ok(Math.abs(fitted.naturalWidth! * fitted.fitScale! - 44.5) < 1e-8);
+  assert.equal(fitToRegion(20, 44.5), 1);
+  assert.equal(fitToRegion(0, 44.5), 1);
+  const out = await exportPdf({
+    source: await fixture(),
+    pages: [{ id: "one", source: 0, rotation: 0 }],
+    edits: [fitted],
+    label: true,
+  });
+  assert.equal((await PDFDocument.load(out)).getPageCount(), 1);
+});
+test("affine correction placement supports nonuniform and rotated source text", async () => {
+  const { prepareCorrection } = await import("../src/pdf/correction");
+  const fitted = await prepareCorrection({
+    ...edit,
+    transform: [12, 4, 2, 16, 48, 680],
+    replacement: "A longer replacement",
+  });
+  const out = await exportPdf({
+    source: await fixture(),
+    pages: [{ id: "one", source: 0, rotation: 0 }],
+    edits: [fitted],
+    label: true,
+  });
+  assert.ok(out.length > 0);
+});
+test("automatic color sampling recognizes flat colored backgrounds and strokes", async () => {
+  const { samplePixels } = await import("../src/pdf/appearance");
+  const data = new Uint8ClampedArray(80 * 40 * 4);
+  for (let y = 0; y < 40; y++)
+    for (let x = 0; x < 80; x++) {
+      const i = (y * 80 + x) * 4;
+      const ink = x > 25 && x < 35 && y > 10 && y < 25;
+      data.set(ink ? [24, 64, 112, 255] : [240, 232, 216, 255], i);
+    }
+  const result = samplePixels(
+    { width: 80, height: 40, data } as ImageData,
+    (x, y) => [(x - 10) / 20, (30 - y) / 25],
+    3,
+    0.8,
+  );
+  assert.ok(result.confidence > 0.9);
+  assert.ok(Math.abs(result.background[0] - 240 / 255) < 0.02);
+  assert.ok(result.foreground[2] > result.foreground[0]);
+});

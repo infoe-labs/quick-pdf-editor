@@ -41,6 +41,7 @@ export interface PageEntry {
   source: number;
   rotation: number;
 }
+export type RGB = [number, number, number];
 export interface Edit {
   id: string;
   pageId: string;
@@ -57,6 +58,12 @@ export interface Edit {
   timestamp: string;
   points?: [number, number][];
   image?: string;
+  fitScale?: number;
+  naturalWidth?: number;
+  background?: RGB;
+  foreground?: RGB;
+  backgroundConfidence?: number;
+  ascent?: number;
 }
 export interface Project {
   version: 1;

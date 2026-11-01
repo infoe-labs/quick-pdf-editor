@@ -1,7 +1,8 @@
+import { Check, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Util, type PDFDocumentProxy } from "pdfjs-dist";
 import { extract } from "../pdf/load";
-import { selectWord } from "../pdf/geometry";
+import { selectWord, inversePoint } from "../pdf/geometry";
 import type { Fragment, Selection, PageEntry, Matrix } from "../pdf/types";
 export interface PageProps {
   doc: PDFDocumentProxy;
@@ -12,6 +13,16 @@ export interface PageProps {
   selected?: Selection | null;
   onSelect?: (s: Selection, extend?: boolean) => void;
   onVisible?: (n: number) => void;
+  editingValue?: string;
+  onEditingChange?: (value: string) => void;
+  onApply?: () => void;
+  onCancel?: () => void;
+  editingAppearance?: {
+    background: [number, number, number];
+    foreground: [number, number, number];
+  };
+  fitScale?: number;
+  canApply?: boolean;
   tool?: string;
   onMark?: (
     page: PageEntry,
@@ -31,7 +42,27 @@ export default function PdfPage({
   onVisible,
   tool,
   onMark,
+  editingValue,
+  onEditingChange,
+  onApply,
+  onCancel,
+  editingAppearance,
+  fitScale = 1,
+  canApply = false,
 }: PageProps) {
+  const input = useRef<HTMLInputElement>(null);
+  const [inputFocused, setInputFocused] = useState(false);
+  useEffect(() => {
+    if (selected?.pageId === entry.id && onEditingChange) {
+      input.current?.focus({ preventScroll: true });
+      input.current?.select();
+    }
+  }, [
+    selected?.id,
+    selected?.offset,
+    entry.id,
+    onEditingChange ? true : false,
+  ]);
   const host = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [visible, setVisible] = useState(false);
@@ -233,24 +264,17 @@ export default function PdfPage({
                 style={{
                   width: w,
                   height: fs * 1.2,
-                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[1] / fs},${m[0] / fs},${m[4] + m[2] * run.ascent},${m[5] + m[3] * run.ascent})`,
+                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[2] / fs},${-m[3] / fs},${m[4] + m[2] * run.ascent},${m[5] + m[3] * run.ascent})`,
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  const angle = Math.atan2(m[1], m[0]);
-                  const x =
-                    e.clientX -
-                    (m[4] + host.current!.getBoundingClientRect().left);
-                  const y =
-                    e.clientY -
-                    (m[5] + host.current!.getBoundingClientRect().top);
-                  const fraction = Math.max(
-                    0,
-                    Math.min(
-                      1,
-                      (x * Math.cos(angle) + y * Math.sin(angle)) / w,
-                    ),
+                  const rect = host.current!.getBoundingClientRect();
+                  const [localX] = inversePoint(
+                    m,
+                    e.clientX - rect.left,
+                    e.clientY - rect.top,
                   );
+                  const fraction = Math.max(0, Math.min(1, (localX * fs) / w));
                   const s = selectWord(
                     run,
                     fraction,
@@ -288,9 +312,75 @@ export default function PdfPage({
                 style={{
                   width: selected.width * scale,
                   height: fs * 1.2,
-                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[1] / fs},${m[0] / fs},${m[4] + m[2] * selected.ascent},${m[5] + m[3] * selected.ascent})`,
+                  transform: `matrix(${m[0] / fs},${m[1] / fs},${-m[2] / fs},${-m[3] / fs},${m[4] + m[2] * selected.ascent},${m[5] + m[3] * selected.ascent})`,
                 }}
               />
+            );
+          })()}
+        {viewport &&
+          selected &&
+          selected.pageId === entry.id &&
+          onEditingChange &&
+          (() => {
+            const m = Util.transform(viewport.transform, selected.transform);
+            const fs = Math.hypot(m[0], m[1]);
+            const color = (c: [number, number, number]) =>
+              `rgb(${c.map((n) => Math.round(n * 255)).join(",")})`;
+            return (
+              <>
+                <input
+                  ref={input}
+                  className="inline-text-editor"
+                  aria-label="Edit selected text in place"
+                  value={editingValue}
+                  spellCheck={false}
+                  style={{
+                    width: (selected.width * scale) / fitScale + 4,
+                    height: fs * 1.2,
+                    fontSize: fs,
+                    fontFamily: selected.family,
+                    background: inputFocused
+                      ? color(editingAppearance?.background || [1, 1, 1])
+                      : "transparent",
+                    color: inputFocused
+                      ? color(editingAppearance?.foreground || [0, 0, 0])
+                      : "transparent",
+                    transform: `matrix(${(m[0] / fs) * fitScale},${(m[1] / fs) * fitScale},${-m[2] / fs},${-m[3] / fs},${m[4] + m[2] * selected.ascent},${m[5] + m[3] * selected.ascent})`,
+                  }}
+                  onFocus={() => setInputFocused(true)}
+                  onBlur={() => setInputFocused(false)}
+                  onChange={(e) => onEditingChange(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      onApply?.();
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      onCancel?.();
+                    }
+                  }}
+                />
+                <div
+                  className="inline-edit-actions"
+                  style={{
+                    left: Math.max(0, m[4]),
+                    top: Math.max(0, m[5] + fs * 0.45),
+                  }}
+                >
+                  <button
+                    aria-label="Apply text change"
+                    disabled={!canApply}
+                    onClick={onApply}
+                  >
+                    <Check size={14} />
+                    Apply ↵
+                  </button>
+                  <button aria-label="Cancel text change" onClick={onCancel}>
+                    <X size={14} />
+                  </button>
+                </div>
+              </>
             );
           })()}
         {visible && extracted && onSelect && !runs.length && (

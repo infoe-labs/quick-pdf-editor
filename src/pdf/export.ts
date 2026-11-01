@@ -5,6 +5,9 @@ import {
   degrees,
   PDFTextField,
   PDFCheckBox,
+  pushGraphicsState,
+  popGraphicsState,
+  concatTransformationMatrix,
 } from "pdf-lib";
 import type { ExportRequest, Edit } from "./types";
 export function fallbackName(name: string): StandardFonts {
@@ -81,26 +84,52 @@ export async function exportPdf(req: ExportRequest): Promise<Uint8Array> {
     doc.addPage(page);
     page.setRotation(degrees(entry.rotation));
     for (const e of req.edits.filter((e) => e.pageId === entry.id)) {
-      const { size, rotation, x, y } = editGeometry(e);
+      const { size, rotation, x, y } =
+        e.type === "correction"
+          ? {
+              size: Math.hypot(e.transform[0], e.transform[1]),
+              rotation:
+                (Math.atan2(e.transform[1], e.transform[0]) * 180) / Math.PI,
+              x: e.transform[4],
+              y: e.transform[5],
+            }
+          : editGeometry(e);
       const font = await doc.embedFont(fallbackName(e.fontName));
       if (e.type === "correction") {
         font.encodeText(e.replacement);
+        const [a, b, c, d] = e.transform;
+        const fit = e.fitScale ?? 1;
+        if (
+          ![a, b, c, d, x, y, fit].every(Number.isFinite) ||
+          Math.abs(a * d - b * c) < 1e-8 ||
+          fit <= 0 ||
+          fit > 1
+        )
+          throw Error("Invalid correction geometry");
+        const bg = e.background || [1, 1, 1],
+          fg = e.foreground || [0, 0, 0];
+        // Keep the original affine matrix and baseline. Fit only the horizontal
+        // glyph advances, so a longer value never spills onto adjacent content.
+        page.pushOperators(
+          pushGraphicsState(),
+          concatTransformationMatrix(a, b, c, d, x, y),
+        );
         page.drawRectangle({
-          x: x + Math.sin((rotation * Math.PI) / 180) * size * 0.22,
-          y: y - Math.cos((rotation * Math.PI) / 180) * size * 0.22,
-          width: e.width,
-          height: Math.max(e.height, size) * 1.18,
-          color: rgb(1, 1, 1),
-          rotate: degrees(rotation),
+          x: 0,
+          y: -0.22,
+          width: e.width / size,
+          height: (e.ascent ?? 0.9) + 0.26,
+          color: rgb(...bg),
         });
+        page.pushOperators(concatTransformationMatrix(fit, 0, 0, 1, 0, 0));
         page.drawText(e.replacement, {
-          x,
-          y,
-          size,
+          x: 0,
+          y: 0,
+          size: 1,
           font,
-          color: rgb(0, 0, 0),
-          rotate: degrees(rotation),
+          color: rgb(...fg),
         });
+        page.pushOperators(popGraphicsState());
       }
       if (e.type === "annotation")
         page.drawText(e.replacement, {
