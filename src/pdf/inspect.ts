@@ -73,7 +73,7 @@ export async function inspect(bytes: Uint8Array): Promise<Inspection> {
           reusable,
           reason: reusable
             ? "Standard font with supported encoding."
-            : "Embedded/custom glyph reuse is not verified. Explicit compatible fallback required.",
+            : "Embedded/custom glyph reuse is not verified. A named compatible font is used for the preview.",
         },
       ];
     });

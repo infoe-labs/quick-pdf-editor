@@ -44,8 +44,9 @@ import {
   inspectInWorker,
   mergeInWorker,
 } from "./pdf/client";
-import { editGeometry, fallbackName } from "./pdf/export";
-import { PDFDocument } from "pdf-lib";
+import { fallbackName } from "./pdf/export";
+import { prepareCorrection } from "./pdf/correction";
+import { sampleAppearance, type Appearance } from "./pdf/appearance";
 import { extendSelection } from "./pdf/geometry";
 import { pixelDiff } from "./pdf/diff";
 import type {
@@ -87,8 +88,11 @@ export default function App() {
   const [info, setInfo] = useState<Inspection>();
   const [selection, setSelection] = useState<Selection | null>(null);
   const [replacement, setReplacement] = useState("");
-  const [fallback, setFallback] = useState(false);
-  const [white, setWhite] = useState(false);
+  const [appearance, setAppearance] = useState<Appearance>();
+  const [editingId, setEditingId] = useState<string>();
+  const [preparing, setPreparing] = useState(false);
+  const [editorError, setEditorError] = useState("");
+  const pendingApply = useRef(false);
   const [draft, setDraft] = useState<Edit>();
   const [scale, setScale] = useState(0.9);
   const [tool, setTool] = useState("select");
@@ -141,6 +145,8 @@ export default function App() {
       timestamp: new Date().toISOString(),
     });
     setDraft(undefined);
+    setSelection(null);
+    setEditingId(undefined);
   }, []);
   useEffect(() => {
     void restoreProject()
@@ -316,7 +322,9 @@ export default function App() {
     const t = setTimeout(() => {
       void (async () => {
         try {
-          const edits = draft ? [...state.edits, draft] : state.edits;
+          const edits = draft
+            ? [...state.edits.filter((e) => e.id !== draft.id), draft]
+            : state.edits;
           const output = await buildPdf(
             {
               source,
@@ -351,6 +359,10 @@ export default function App() {
       controller.abort();
     };
   }, [source, doc, state, draft, inheritedHistory]);
+  const currentEdits = useRef(state.edits);
+  useEffect(() => {
+    currentEdits.current = state.edits;
+  }, [state.edits]);
   const selectedRef = useRef<Selection | null>(null);
   useEffect(() => {
     selectedRef.current = selection;
@@ -365,9 +377,22 @@ export default function App() {
       return;
     }
     setSelection(s);
-    setReplacement(s.original);
-    setFallback(false);
-    setWhite(false);
+    setCompare("corrected");
+    const existing = currentEdits.current.find(
+      (e) =>
+        e.type === "correction" &&
+        e.pageId === s.pageId &&
+        e.original === s.original &&
+        Math.hypot(
+          e.transform[4] - s.transform[4],
+          e.transform[5] - s.transform[5],
+        ) < 1,
+    );
+    setReplacement(existing?.replacement ?? s.original);
+    setEditingId(existing?.id);
+    pendingApply.current = false;
+    setEditorError("");
+    setError("");
     setDraft(undefined);
     setPanel("inspect");
     setShowPanel(true);
@@ -402,7 +427,7 @@ export default function App() {
         : undefined;
   function makeEdit(type: Edit["type"], sel: Selection, text: string): Edit {
     return {
-      id: uid(),
+      id: type === "correction" && editingId ? editingId : uid(),
       pageId:
         sel.pageId ||
         state.pages.find((p) => p.source === sel.page - 1)?.id ||
@@ -417,91 +442,117 @@ export default function App() {
       fontId: sel.fontId,
       fontName: selectedFont?.name || sel.family,
       fallback: !selectedFont?.reusable,
+      ascent: sel.ascent,
+      background: appearance?.background,
+      foreground: appearance?.foreground,
+      backgroundConfidence: appearance?.confidence,
       timestamp: new Date().toISOString(),
     };
   }
-  async function propose() {
-    if (!selection) return;
+  useEffect(() => {
+    setAppearance(undefined);
+    if (!doc || !selection) return;
+    const controller = new AbortController();
+    void sampleAppearance(doc, selection, controller.signal)
+      .then((value) => {
+        if (!controller.signal.aborted) setAppearance(value);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted)
+          setAppearance({
+            background: [1, 1, 1],
+            foreground: [0, 0, 0],
+            confidence: 0,
+          });
+      });
+    return () => controller.abort();
+  }, [doc, selection]);
+  useEffect(() => {
+    if (
+      !selection ||
+      !appearance ||
+      (replacement === selection.original && !editingId)
+    ) {
+      setPreparing(false);
+      return;
+    }
+    let stale = false;
+    setPreparing(true);
+    setEditorError("");
+    const timer = setTimeout(() => {
+      void prepareCorrection(makeEdit("correction", selection, replacement))
+        .then((edit) => {
+          if (!stale) {
+            setDraft(edit);
+            setCompare("corrected");
+            setPreparing(false);
+          }
+        })
+        .catch((e: unknown) => {
+          if (!stale) {
+            setEditorError(
+              e instanceof Error
+                ? e.message
+                : "This text could not be prepared.",
+            );
+            setPreparing(false);
+            pendingApply.current = false;
+          }
+        });
+    }, 140);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [
+    selection,
+    replacement,
+    appearance,
+    editingId,
+    selectedFont?.name,
+    selectedFont?.reusable,
+  ]);
+  function acceptDraft() {
+    if (!draft || !bytes || preparing || draft.replacement !== replacement) {
+      pendingApply.current = true;
+      return;
+    }
+    pendingApply.current = false;
+    commit({
+      ...state,
+      edits: [
+        ...state.edits.filter((e) => e.id !== editingId),
+        ...(draft.original === draft.replacement ? [] : [draft]),
+      ],
+    });
+    setNotice(
+      "Text updated. Your original is preserved; the export includes the change record.",
+    );
+  }
+  useEffect(() => {
+    if (
+      pendingApply.current &&
+      draft &&
+      bytes &&
+      !preparing &&
+      draft.replacement === replacement
+    )
+      acceptDraft();
+  }, [draft, bytes, preparing, replacement]);
+  function cancelEditing() {
+    pendingApply.current = false;
+    setDraft(undefined);
+    setSelection(null);
+    setEditingId(undefined);
+    setEditorError("");
+  }
+  function changeReplacement(value: string) {
+    pendingApply.current = false;
+    setReplacement(value.replace(/[\r\n]+/g, " "));
+    setDraft(undefined);
+    setBytes(undefined);
+    setEditorError("");
     setError("");
-    if (!white) {
-      setError(
-        "Confirm that the correction region has a plain white background.",
-      );
-      return;
-    }
-    if (!selectedFont?.reusable && !fallback) {
-      setError("Explicitly accept the disclosed fallback font first.");
-      return;
-    }
-    try {
-      const e = makeEdit("correction", selection, replacement);
-      editGeometry(e);
-      const d = await PDFDocument.create();
-      const f = await d.embedFont(fallbackName(e.fontName));
-      const missing = [
-        ...new Set(
-          Array.from(replacement).filter((c) => {
-            try {
-              f.encodeText(c);
-              return false;
-            } catch {
-              return true;
-            }
-          }),
-        ),
-      ];
-      if (missing.length) {
-        setError(
-          `Replacement glyphs unavailable in ${fallbackName(e.fontName)}: ${missing.join(" ")}. No correction applied.`,
-        );
-        return;
-      }
-      if (
-        Math.abs(selection.characterSpacing || 0) > 0.001 ||
-        Math.abs(selection.wordSpacing || 0) > 0.001
-      ) {
-        setError(
-          "Nonzero character or word spacing detected. Exact spacing-preserving export is unsupported for this run.",
-        );
-        return;
-      }
-      f.encodeText(replacement);
-      const width = f.widthOfTextAtSize(
-        replacement,
-        Math.hypot(e.transform[0], e.transform[1]),
-      );
-      if (width > selection.width + 1) {
-        setError(
-          `Replacement is ${width.toFixed(1)} pt wide; selected region is ${selection.width.toFixed(1)} pt. Choose a shorter value to avoid covering adjacent content.`,
-        );
-        return;
-      }
-      if (
-        state.edits.some(
-          (x) =>
-            x.pageId === e.pageId &&
-            x.type === "correction" &&
-            Math.hypot(
-              x.transform[4] - e.transform[4],
-              x.transform[5] - e.transform[5],
-            ) < Math.max(e.width, x.width),
-        )
-      ) {
-        setError(
-          "This region overlaps an existing correction. Undo or remove that correction first.",
-        );
-        return;
-      }
-      setDraft(e);
-      setCompare("corrected");
-      setNotice(
-        "Preview generated from the export engine. Inspect alignment and background before accepting.",
-      );
-    } catch {
-      setError(
-        "Replacement glyphs or this transform are unsupported. No correction was applied.",
-      );
-    }
   }
   function mark(
     entry: PageEntry,
@@ -551,7 +602,7 @@ export default function App() {
   }
   function undo() {
     if (draft) {
-      setDraft(undefined);
+      cancelEditing();
       return;
     }
     dispatch({ type: "undo" });
@@ -570,8 +621,7 @@ export default function App() {
         else undo();
       }
       if (e.key === "Escape") {
-        setDraft(undefined);
-        setSelection(null);
+        cancelEditing();
       }
     };
     window.addEventListener("keydown", fn);
@@ -1115,6 +1165,22 @@ export default function App() {
                           scale={scale}
                           selected={selection}
                           onSelect={choose}
+                          editingValue={replacement}
+                          onEditingChange={
+                            compare === "corrected"
+                              ? changeReplacement
+                              : undefined
+                          }
+                          onApply={acceptDraft}
+                          onCancel={cancelEditing}
+                          editingAppearance={appearance}
+                          fitScale={draft?.fitScale}
+                          canApply={
+                            !!draft &&
+                            !!bytes &&
+                            !preparing &&
+                            draft.replacement === replacement
+                          }
                           tool={tool}
                           onMark={mark}
                         />
@@ -1549,12 +1615,12 @@ export default function App() {
                       <div>
                         <strong>
                           {selectedFont?.reusable
-                            ? "Standard font supported"
-                            : "Exact glyph reuse not verified"}
+                            ? "Original font style"
+                            : `Automatic ${fallbackName(selectedFont?.name || selection.family)} fallback`}
                         </strong>
                         <p>
                           {selectedFont?.reason ||
-                            "The selected PDF.js font cannot be reliably matched to one resource. Use the explicitly disclosed fallback."}
+                            "A compatible local font is used automatically. The export preview shows the result; embedded outlines are not reused."}
                         </p>
                       </div>
                     </div>
@@ -1599,84 +1665,66 @@ export default function App() {
                       </dl>
                     </details>
                     <label className="field-label">
-                      PROPOSED REPLACEMENT
-                      <textarea
+                      REPLACEMENT
+                      <input
+                        aria-label="Replacement text"
                         value={replacement}
-                        onChange={(e) => {
-                          setReplacement(e.target.value);
-                          setDraft(undefined);
+                        onChange={(e) => changeReplacement(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            acceptDraft();
+                          }
+                          if (e.key === "Escape") cancelEditing();
                         }}
-                        rows={2}
                         spellCheck={false}
                       />
                     </label>
-                    {!selectedFont?.reusable && (
-                      <label className="check-label">
-                        <input
-                          type="checkbox"
-                          checked={fallback}
-                          onChange={(e) => setFallback(e.target.checked)}
-                        />
-                        Use disclosed{" "}
-                        {fallbackName(selectedFont?.name || selection.family)}{" "}
-                        fallback. Embedded subset coverage is unknown; outlines
-                        will not be reused.
-                      </label>
-                    )}
-                    <label className="check-label">
-                      <input
-                        type="checkbox"
-                        checked={white}
-                        onChange={(e) => setWhite(e.target.checked)}
-                      />
-                      I checked that this region has a plain white background
-                      and black text.
-                    </label>
-                    <p className="small-note">
-                      White cover + vector text overlay. Original text remains
-                      underneath. Color and background are not automatically
-                      matched.
+                    <p className="edit-help">
+                      Type directly on the page. Enter to apply · Escape to
+                      cancel.
                     </p>
-                    {draft ? (
-                      <div className="draft-actions">
-                        <button
-                          className="button primary"
-                          disabled={!bytes}
-                          onClick={() => {
-                            commit({
-                              ...state,
-                              edits: [...state.edits, draft],
-                            });
-                            setNotice(
-                              "Correction accepted. The exported copy includes a disclosure and change log.",
-                            );
-                          }}
-                        >
-                          <Check size={16} />
-                          Accept correction
-                        </button>
-                        <button
-                          className="button subtle"
-                          onClick={() => setDraft(undefined)}
-                        >
-                          <X size={15} />
-                          Reject
-                        </button>
+                    {draft && (
+                      <div className="auto-fit-note" role="status">
+                        {(draft.fitScale ?? 1) < 0.999
+                          ? `Automatically fitted to ${Math.round((draft.fitScale ?? 1) * 100)}% width. Original baseline and height preserved.`
+                          : "Original baseline and text height preserved."}
                       </div>
-                    ) : (
-                      <button
-                        className="button primary full"
-                        disabled={
-                          replacement === selection.original ||
-                          !replacement ||
-                          busy
-                        }
-                        onClick={() => void propose()}
-                      >
-                        Preview correction
-                        <ChevronRight size={16} />
-                      </button>
                     )}
+                    {appearance && appearance.confidence < 0.9 && (
+                      <p className="small-note">
+                        This background is complex. Its color is estimated;
+                        compare the preview before applying.
+                      </p>
+                    )}
+                    {editorError && (
+                      <p className="editor-error" role="alert">
+                        {editorError}
+                      </p>
+                    )}
+                    <div className="draft-actions">
+                      <button
+                        className="button primary"
+                        disabled={
+                          !draft ||
+                          !bytes ||
+                          preparing ||
+                          draft.replacement !== replacement
+                        }
+                        onClick={acceptDraft}
+                      >
+                        <Check size={16} />
+                        {preparing ? "Fitting text…" : "Apply change"}
+                      </button>
+                      <button className="button subtle" onClick={cancelEditing}>
+                        <X size={15} />
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="small-note">
+                      Vector replacement overlay. Source text is retained
+                      underneath; exports are corrected copies.
+                    </p>
                     <button
                       className="button subtle full"
                       onClick={() => {

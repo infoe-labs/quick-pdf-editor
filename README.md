@@ -28,34 +28,37 @@ npm run preview
 
 ## Correction workflow
 
-1. Open a PDF, or drop it on the welcome screen. The original is copied into memory.
-2. Click a date/word. Double-click selects an extracted run. Shift-click adds nearby
-   collinear text in the same font. Adjacent split commands are joined when their
-   geometry agrees. This is not universal paragraph or table reconstruction.
-3. Inspect the original text, resource name, size, coordinates and transform.
-   Advanced diagnostics show encoding, embedding/subset flags and available
-   operator spacing information. Unknown properties are reported as unresolved.
-4. Enter a replacement. Standard Western font encodings are checked. Embedded
-   fonts require explicit acceptance of a named standard-font fallback; original
-   embedded outlines are **not** reused. Unknown subset coverage is not treated
-   as proof that a glyph is present. Unsupported replacement characters are listed.
-5. Confirm a plain white background and black source text. Preview the generated
-   PDF; inspect at 100%, 200%, 400% or 800%, side by side or overlaid. Accept/reject.
-6. Use **Save as new** to download a separate `*-corrected-copy.pdf`. Each page has
-   a visible correction footer, metadata identifies the corrected copy, and an
-   attached JSON change log records accepted corrections. Download the log
-   separately from Changes. Page order/rotations and form values are also recorded.
-7. **Changes → Download unchanged original** returns the exact original bytes.
-   It is the only export described as unchanged. Modified exports cannot be
-   represented as authentic, unmodified records.
+1. Open a PDF, then click the text you want to change. A focused editor opens
+   directly over the selected word. Double-click selects the entire extracted run;
+   Shift-click adds nearby aligned text in the same font.
+2. Type the new value on the page. Preview generation starts automatically. Longer
+   replacements fit horizontally inside the existing region while retaining the
+   original baseline and text height. There is no "choose a shorter value" gate.
+3. Press **Enter** or click **Apply** beside the text. Escape/Cancel discards the
+   draft. Click an accepted correction again to revise it. Undo/redo stays available.
+4. Use **Save as new** to download a separate `*-corrected-copy.pdf`. Each page has
+   a visible correction footer and an attached JSON change record. The Changes
+   panel offers the log and byte-identical unchanged originals separately.
 
-The correction footer occupies the bottom **16 PDF points** of each exported page.
-It may cover existing footer content: inspect it before export. The original is
-always available separately. Correction overlays retain underlying source text;
-this is **not deletion or secure redaction**. Image backgrounds, non-black text,
-skew, reflection, nonuniform scaling and nonzero character/word spacing are not
-supported for faithful correction. Unsupported cases are rejected or explicitly
-require fallback; review every accepted fallback visually.
+Source text/background colors are estimated locally from rendered pixels. Solid
+backgrounds are detected automatically; complex backgrounds get an explicit review
+notice. Standard source fonts are matched where supported. Other resources use a
+named compatible fallback automatically, displayed in Properties; embedded font
+outlines are not reused. Unsupported replacement characters are identified instead
+of silently exporting missing glyphs. Strong horizontal compression can reduce
+legibility; the fitting percentage is displayed. This is fitting, not paragraph
+reflow or proof of original typography equivalence.
+
+While the on-page input has focus, it is an editing control. Blur it or use
+side-by-side/overlay comparison to inspect the generated vector PDF preview.
+Font/resource inspection remains available without blocking the basic edit flow.
+Affine correction placement preserves rotation, nonuniform scale and skew when
+selection geometry is available. Source spacing is normalized to the fitted value.
+
+The correction footer occupies the bottom **16 PDF points** of each exported page
+and may cover existing footer content: inspect it before export. Overlay corrections
+retain underlying source text; this is **not deletion or secure redaction**. A
+modified financial record is always exported as a disclosed corrected copy.
 
 ## Working capabilities
 
@@ -149,7 +152,7 @@ BASE_PATH=/quick-pdf-editor/ npm run test:e2e
 ```
 
 Tests cover immutable bytes, source structure, coordinates, font diagnostics,
-encoding failure, page operations, forms, storage isolation/expiry, a real date
+encoding failure, automatic text fitting and color sampling, page operations, forms, storage isolation/expiry, a real date
 correction/download/reopen flow, fixed-resolution pixel preservation outside
 correction regions, network requests, mobile UI and offline recovery. Synthetic
 fixtures include standard Type 1 fonts, proportional/monospaced text, tables,
@@ -171,6 +174,7 @@ or commit identity is implied by copying this base layer.
 
 `src/pdf/load.ts` owns PDF.js loading/extraction; `text-metrics.ts` isolates the
 operator-list adapter; `geometry.ts` owns user-space selection geometry;
+`appearance.ts` samples local colors; `correction.ts` prepares fitted text;
 `inspect.ts` reads font/signature/form dictionaries; `export.ts` implements vector
 edits and disclosures inside `export.worker.ts`; `client.ts` handles cancellation
 and download; `diff.ts` compares pixels. `PdfPage.tsx` maps PDF viewport transforms
