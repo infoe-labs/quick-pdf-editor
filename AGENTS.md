@@ -117,3 +117,8 @@ local and must not permit personal identities.
 - Do not publish until the destination-local public Git identity and hooks have
   been approved. A public alias mentioned in conversation is not an exact email
   configuration, and another repository's configuration must not be copied.
+
+## Shared repository standards
+
+Read `docs/SHARED_STANDARDS.md` for the canonical infoe-labs guidelines.
+Preserve stronger project-specific privacy, review, test and release rules.
